@@ -12,3 +12,4 @@ pylzma
 pyelftools
 bitstring
 
+python-geoip-geolite2

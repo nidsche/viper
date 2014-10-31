@@ -10,6 +10,9 @@ import tempfile
 import mimetypes
 import OleFileIO_PL
 
+import socket
+from geoip import geolite2
+
 from viper.common.out import *
 from viper.common.abstracts import Module
 from viper.core.session import __sessions__
@@ -33,6 +36,7 @@ class EmailParse(Module):
             print("\t--header (-r)\tShow email Header information")
             print("\t--all (-a)\tRun all the options")
             print("\t--open (-o)\tSwitch session to the specified attachment")
+            print("\t--received (-x)\tanalyse the Received part of the message")
         
         def string_clean(value):
             return re.sub('[\n\t\r]', '', value)
@@ -148,6 +152,47 @@ class EmailParse(Module):
             print(table(header=['Key', 'Value'], rows=rows))
             return
 
+        def email_received(msg):
+            # Headers
+            ips = []
+            rows = []
+            rec = []
+            itrc = msg.get_all('Received')
+            if itrc:
+                for x in msg.get_all('Received'):
+                    rec.append(['Received', string_clean(x)])
+            else:
+                print_error("No Received fields included")
+                return
+            # collect IPs from Received field
+            for x in msg.get_all('Received'):
+                ipx = re.search(r"[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+",string_clean(x))
+                hel = re.search(r"helo=[^) ]+",string_clean(x))
+                if hel:
+                    helo=hel.group()
+                else:
+                    helo=""
+                if ipx:
+                    ips.append( [ipx.group(),helo[5:]] )
+            #resolve geolocation
+            for (ip, helo) in ips:
+                match = geolite2.lookup(ip)
+                cnt="--"
+                tmz="--"
+                try:
+                    res = socket.gethostbyaddr(ip)
+                    nam = res[0]
+                except:
+                    nam ="???"
+                if match is not None:
+                    cnt=match.country
+                    tmz=match.timezone
+                rows.append([ip,cnt,tmz,helo,nam])
+            print(table(header=['Key', 'Value'], rows=rec))
+            print(table(header=['IP','Country','Timezone','Helo','Hostname'], rows=rows))
+
+            return            
+
         def email_header(msg):
             # Headers
             rows = []
@@ -155,8 +200,10 @@ class EmailParse(Module):
                 # Adding Received to ignore list. this has to be handeled separately if there are more then one line
                 if x not in ['Subject', 'From', 'To', 'Date', 'Cc', 'Bcc', 'DKIM-Signature','Received']:
                     rows.append([x, string_clean(msg.get(x))])
-            for x in msg.get_all('Received'):
-                rows.append(['Received', string_clean(x)])
+            itrc=msg.get_all('Received')
+            if itrc:
+                for x in msg.get_all('Received'):
+                    rows.append(['Received', string_clean(x)])
             print_info("Email headers:")
             rows = sorted(rows, key=lambda entry: entry[0])
             print(table(header=['Key', 'Value'], rows=rows))
@@ -243,7 +290,7 @@ class EmailParse(Module):
             return
 
         try:
-            opts, argv = getopt.getopt(self.args, 'hefrao:', ['help', 'envelope', 'attach', 'header', 'all', 'open='])
+            opts, argv = getopt.getopt(self.args, 'hefraxo:', ['help', 'envelope', 'attach', 'header','received', 'all', 'open='])
         except getopt.GetoptError as e:
             print(e)
             return
@@ -281,6 +328,11 @@ class EmailParse(Module):
                 if ole_flag:
                     msg = parse_ole_msg(ole)
                 email_header(msg)
+                return
+            elif opt in ('-x','--received'):
+                if ole_flag:
+                    msg = parse_ole_msg(ole)
+                email_received(msg)
                 return
             elif opt in ('-a', '--all'):
                 if ole_flag:
